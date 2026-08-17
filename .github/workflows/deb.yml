@@ -60,12 +60,20 @@ jobs:
           DEB_BUILD_OPTIONS: nocheck
         run: dpkg-buildpackage -us -uc -b
 
+      - name: Collect packages
+        run: |
+          mkdir -p artifacts/debs
+          shopt -s nullglob
+          cp ../*.deb ../*.ddeb artifacts/debs/ 2>/dev/null || true
+          if ! compgen -G "artifacts/debs/*.deb" > /dev/null; then
+            echo "No .deb files found"
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@v6
         with:
           name: debs-ubuntu-${{ matrix.ubuntu }}
-          path: |
-            ../*.deb
-            ../*.ddeb
+          path: artifacts/debs/*.deb
           if-no-files-found: error
 
   release:
