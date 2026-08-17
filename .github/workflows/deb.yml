@@ -1,0 +1,98 @@
+name: Debian Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ubuntu: '24.04'
+            suffix: ubuntu24.04
+          - ubuntu: '26.04'
+            suffix: ubuntu26.04
+    container:
+      image: ubuntu:${{ matrix.ubuntu }}
+      options: --user root
+    steps:
+      - name: Install build prerequisites
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git ca-certificates sudo devscripts equivs build-essential
+
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Stamp changelog
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            upstream="${GITHUB_REF#refs/tags/}"
+            upstream="${upstream#v}"
+          else
+            upstream="$(dpkg-parsechangelog -S Version | cut -d- -f1)"
+          fi
+          dch -v "${upstream}-1+${{ matrix.suffix }}" --force-distribution \
+            -D unstable "CI build for Ubuntu ${{ matrix.ubuntu }}"
+
+      - name: Install build dependencies
+        run: |
+          mk-build-deps -i -t \
+            'apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends -y' \
+            debian/control
+
+      - name: Prepare source tree
+        run: ./autogen.sh
+
+      - name: Build binary packages
+        env:
+          DEB_BUILD_OPTIONS: nocheck
+        run: dpkg-buildpackage -us -uc -b
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: debs-ubuntu-${{ matrix.ubuntu }}
+          path: |
+            ../*.deb
+            ../*.ddeb
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: debs
+          pattern: debs-*
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          shopt -s nullglob globstar
+          files=(debs/**/*.deb)
+          if (( ${#files[@]} == 0 )); then
+            echo "No .deb files found"
+            exit 1
+          fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --generate-notes
+          fi
+          gh release upload "$tag" "${files[@]}" --clobber
