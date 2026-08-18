@@ -40,13 +40,18 @@ jobs:
 
       - name: Stamp changelog
         run: |
+          pkg_ver="$(dpkg-parsechangelog -S Version)"
+          debian_rev="${pkg_ver#*-}"
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            upstream="${GITHUB_REF#refs/tags/}"
-            upstream="${upstream#v}"
-          else
-            upstream="$(dpkg-parsechangelog -S Version | cut -d- -f1)"
+            tag="${GITHUB_REF#refs/tags/}"
+            tag="${tag#v}"
+            if [[ "$tag" == *-* ]]; then
+              pkg_ver="$tag"
+            else
+              pkg_ver="${tag}-${debian_rev}"
+            fi
           fi
-          dch -v "${upstream}-1+${{ matrix.suffix }}" --force-distribution \
+          dch -v "${pkg_ver}+${{ matrix.suffix }}" --force-distribution \
             -D unstable "CI build for Ubuntu ${{ matrix.ubuntu }}"
 
       - name: Install build dependencies
